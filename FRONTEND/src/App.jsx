@@ -12,7 +12,10 @@ import {
   query, 
   where, 
   doc,
-  setDoc
+  setDoc,
+  orderBy,
+  updateDoc,
+  deleteDoc
 } from './firebase/config'
 import ClassManager from './components/ClassManager';
 import AssignmentsManager from './components/AssignmentsManager';
@@ -659,173 +662,422 @@ function Sidebar({ activeNav, setActiveNav, role, onLogout, mobileOpen, setMobil
 }
 
 // ─── STUDENT DASHBOARD ────────────────────────────────────────────────────────
+// ─── STUDENT DASHBOARD WITH REAL DATA ────────────────────────────────────────
 function StudentDashboard({ userData }) {
+  const [dashboardData, setDashboardData] = useState({
+    enrolledClasses: [],
+    assignments: [],
+    upcomingClasses: [],
+    stats: {
+      totalClasses: 0,
+      assignmentsDue: 0,
+      submittedCount: 0,
+      overdueCount: 0
+    }
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchStudentDashboard();
+  }, []);
+
+  const fetchStudentDashboard = async () => {
+    try {
+      setLoading(true);
+      
+      // Get student's enrolled classes
+      const enrollmentsQuery = query(
+        collection(db, "enrollments"), 
+        where("studentId", "==", auth.currentUser?.uid),
+        where("status", "==", "active")
+      );
+      const enrollmentsSnapshot = await getDocs(enrollmentsQuery);
+      const classIds = enrollmentsSnapshot.docs.map(doc => doc.data().classId);
+      
+      // Get class details
+      let enrolledClasses = [];
+      for (const classId of classIds) {
+        const classDoc = await getDoc(doc(db, "classes", classId));
+        if (classDoc.exists()) {
+          enrolledClasses.push({ id: classDoc.id, ...classDoc.data() });
+        }
+      }
+      
+      // Get assignments from enrolled classes
+      let allAssignments = [];
+      for (const classId of classIds) {
+        const assignmentsQuery = query(
+          collection(db, "assignments"), 
+          where("classId", "==", classId),
+          orderBy("dueDate", "asc")
+        );
+        const assignmentsSnapshot = await getDocs(assignmentsQuery);
+        const classAssignments = assignmentsSnapshot.docs.map(doc => ({ 
+          id: doc.id, 
+          ...doc.data() 
+        }));
+        allAssignments = [...allAssignments, ...classAssignments];
+      }
+      
+      // Get submissions to check what's submitted
+      let submittedAssignmentIds = [];
+      const submissionsQuery = query(
+        collection(db, "submissions"),
+        where("studentId", "==", auth.currentUser?.uid)
+      );
+      const submissionsSnapshot = await getDocs(submissionsQuery);
+      submittedAssignmentIds = submissionsSnapshot.docs.map(doc => doc.data().assignmentId);
+      
+      // Calculate stats
+      const now = new Date();
+      const assignmentsDue = allAssignments.filter(a => new Date(a.dueDate) > now).length;
+      const submittedCount = submittedAssignmentIds.length;
+      const overdueCount = allAssignments.filter(a => 
+        new Date(a.dueDate) < now && !submittedAssignmentIds.includes(a.id)
+      ).length;
+      
+      // Get upcoming classes (next 7 days)
+      const upcomingClasses = enrolledClasses.filter(c => c.status === "active").slice(0, 4);
+      
+      setDashboardData({
+        enrolledClasses,
+        assignments: allAssignments,
+        upcomingClasses,
+        stats: {
+          totalClasses: enrolledClasses.length,
+          assignmentsDue,
+          submittedCount,
+          overdueCount
+        }
+      });
+      
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ textAlign: "center", padding: "40px" }}>Loading dashboard...</div>;
+  }
+
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 4px" }}>Good morning, {userData?.fullName?.split(" ")[0] || "Student"} 👋</h1>
-        <p style={{ color: COLORS.textMuted, fontSize: 14, margin: 0 }}>Thursday, April 30, 2026 · 3 classes today</p>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 4px" }}>
+          Good morning, {userData?.fullName?.split(" ")[0] || "Student"} 👋
+        </h1>
+        <p style={{ color: COLORS.textMuted, fontSize: 14, margin: 0 }}>
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          {' · '}{dashboardData.stats.totalClasses} classes enrolled
+        </p>
       </div>
 
+      {/* Stats row - NOW WITH REAL DATA */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 14, marginBottom: 28 }}>
-        {[
-          { label: "Classes Today", value: "3", color: "#2563EB" },
-          { label: "Assignments Due", value: "2", color: "#D97706" },
-          { label: "Submitted", value: "1", color: "#16A34A" },
-          { label: "Overdue", value: "1", color: "#DC2626" },
-        ].map(s => (
-          <div key={s.label} style={{
-            background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
-            padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
-          }}>
-            <div style={{ fontSize: 26, fontWeight: 700, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>{s.label}</div>
-          </div>
-        ))}
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#2563EB" }}>{dashboardData.stats.totalClasses}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Classes Enrolled</div>
+        </div>
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#D97706" }}>{dashboardData.stats.assignmentsDue}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Assignments Due</div>
+        </div>
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#16A34A" }}>{dashboardData.stats.submittedCount}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Submitted</div>
+        </div>
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#DC2626" }}>{dashboardData.stats.overdueCount}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Overdue</div>
+        </div>
       </div>
 
-      <SectionTitle>Upcoming Classes</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14, marginBottom: 28 }}>
-        {upcomingClasses.map(cls => (
-          <Card key={cls.id} style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ height: 4, background: cls.color }} />
-            <div style={{ padding: "16px 18px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text, marginBottom: 3 }}>{cls.name}</div>
-                  <div style={{ fontSize: 12, color: COLORS.textMuted }}>{cls.grade} · {cls.teacher}</div>
+      {/* Upcoming Classes - NOW WITH REAL DATA */}
+      <SectionTitle>Your Classes</SectionTitle>
+      {dashboardData.enrolledClasses.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: 40 }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>📚</div>
+          <p style={{ color: COLORS.textMuted, margin: 0 }}>You're not enrolled in any classes yet. Go to "My Classes" to enroll!</p>
+        </Card>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14, marginBottom: 28 }}>
+          {dashboardData.enrolledClasses.slice(0, 4).map(cls => (
+            <Card key={cls.id} style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ height: 4, background: cls.color || "#2563EB" }} />
+              <div style={{ padding: "16px 18px" }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text, marginBottom: 4 }}>{cls.name}</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>{cls.grade} · {cls.teacherName}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+                  <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke={COLORS.textMuted} strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                  </svg>
+                  <span style={{ fontSize: 13, color: COLORS.textMuted }}>{cls.schedule}</span>
                 </div>
-                <StatusBadge status={cls.status} />
+                <button style={{
+                  width: "100%", padding: "9px", borderRadius: 9,
+                  background: cls.color || "#2563EB",
+                  border: "none", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer"
+                }}>
+                  View Class
+                </button>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
-                <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke={COLORS.textMuted} strokeWidth="2">
-                  <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
-                </svg>
-                <span style={{ fontSize: 13, color: COLORS.textMuted }}>{cls.time}</span>
-              </div>
-              <button style={{
-                width: "100%", padding: "9px", borderRadius: 9,
-                background: cls.status === "live" ? COLORS.live : cls.color,
-                border: "none", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer"
-              }}>
-                {cls.status === "live" ? "Join Now →" : "Join Class"}
-              </button>
-            </div>
-          </Card>
-        ))}
-      </div>
+            </Card>
+          ))}
+        </div>
+      )}
 
-      <SectionTitle>Assignments</SectionTitle>
-      <Card style={{ padding: 0 }}>
-        {assignments.map((a, i) => (
-          <div key={a.id} style={{
-            display: "flex", alignItems: "center", gap: 14, padding: "15px 20px",
-            borderBottom: i < assignments.length - 1 ? `1px solid ${COLORS.border}` : "none"
-          }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: 10,
-              background: a.status === "overdue" ? COLORS.dangerLight : a.status === "submitted" ? COLORS.successLight : COLORS.warningLight,
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18
+      {/* Recent Assignments */}
+      <SectionTitle>Recent Assignments</SectionTitle>
+      {dashboardData.assignments.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: 40 }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>📝</div>
+          <p style={{ color: COLORS.textMuted, margin: 0 }}>No assignments yet. Check back later!</p>
+        </Card>
+      ) : (
+        <Card style={{ padding: 0 }}>
+          {dashboardData.assignments.slice(0, 5).map((a, i) => (
+            <div key={a.id} style={{
+              display: "flex", alignItems: "center", gap: 14, padding: "15px 20px",
+              borderBottom: i < Math.min(dashboardData.assignments.length, 5) - 1 ? `1px solid ${COLORS.border}` : "none"
             }}>
-              {a.status === "submitted" ? "✓" : a.status === "overdue" ? "!" : "✏"}
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: new Date(a.dueDate) < new Date() ? COLORS.dangerLight : COLORS.warningLight,
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18
+              }}>
+                {new Date(a.dueDate) < new Date() ? "!" : "✏"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{a.title}</div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted }}>{a.className} · Due {new Date(a.dueDate).toLocaleDateString()}</div>
+              </div>
+              <StatusBadge status={new Date(a.dueDate) < new Date() ? "overdue" : "pending"} />
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{a.title}</div>
-              <div style={{ fontSize: 12, color: COLORS.textMuted }}>{a.subject} · Due {a.dueDate}</div>
-            </div>
-            <StatusBadge status={a.status} />
-          </div>
-        ))}
-      </Card>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }
 
 // ─── TEACHER DASHBOARD ────────────────────────────────────────────────────────
+// ─── TEACHER DASHBOARD WITH REAL DATA ────────────────────────────────────────
 function TeacherDashboard({ userData }) {
+  const [dashboardData, setDashboardData] = useState({
+    myClasses: [],
+    assignments: [],
+    recentSubmissions: [],
+    stats: {
+      totalClasses: 0,
+      totalStudents: 0,
+      submissionsToday: 0,
+      pendingReviews: 0
+    }
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchTeacherDashboard();
+  }, []);
+
+  const fetchTeacherDashboard = async () => {
+    try {
+      setLoading(true);
+      
+      // Get teacher's classes
+      const classesQuery = query(collection(db, "classes"), where("teacherId", "==", auth.currentUser?.uid));
+      const classesSnapshot = await getDocs(classesQuery);
+      const myClasses = classesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Calculate total students
+      let totalStudents = 0;
+      for (const cls of myClasses) {
+        totalStudents += cls.enrolledStudents?.length || 0;
+      }
+      
+      // Get teacher's assignments
+      const assignmentsQuery = query(collection(db, "assignments"), where("teacherId", "==", auth.currentUser?.uid), orderBy("createdAt", "desc"));
+      const assignmentsSnapshot = await getDocs(assignmentsQuery);
+      const assignments = assignmentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Get recent submissions (last 7 days)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const submissionsQuery = query(
+        collection(db, "submissions"),
+        where("submittedAt", ">=", sevenDaysAgo.toISOString()),
+        orderBy("submittedAt", "desc")
+      );
+      const submissionsSnapshot = await getDocs(submissionsQuery);
+      const allSubmissions = submissionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Filter submissions for teacher's classes
+      const classIds = myClasses.map(c => c.id);
+      const recentSubmissions = allSubmissions.filter(s => classIds.includes(s.classId));
+      
+      // Calculate stats
+      const today = new Date().toDateString();
+      const submissionsToday = recentSubmissions.filter(s => new Date(s.submittedAt).toDateString() === today).length;
+      const pendingReviews = recentSubmissions.filter(s => s.status === "submitted" && !s.grade).length;
+      
+      setDashboardData({
+        myClasses,
+        assignments,
+        recentSubmissions: recentSubmissions.slice(0, 5),
+        stats: {
+          totalClasses: myClasses.length,
+          totalStudents,
+          submissionsToday,
+          pendingReviews
+        }
+      });
+      
+    } catch (error) {
+      console.error("Error fetching teacher dashboard:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ textAlign: "center", padding: "40px" }}>Loading dashboard...</div>;
+  }
+
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 4px" }}>Welcome back, {userData?.fullName?.split(" ")[0] || "Teacher"} 👨‍🏫</h1>
-        <p style={{ color: COLORS.textMuted, fontSize: 14, margin: 0 }}>Thursday, April 30, 2026 · 3 classes scheduled</p>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 4px" }}>
+          Welcome back, {userData?.fullName?.split(" ")[0] || "Teacher"} 👨‍🏫
+        </h1>
+        <p style={{ color: COLORS.textMuted, fontSize: 14, margin: 0 }}>
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          {' · '}{dashboardData.stats.totalClasses} active classes
+        </p>
       </div>
 
+      {/* Stats row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 14, marginBottom: 28 }}>
-        {[
-          { label: "Classes", value: "3", color: "#2563EB" },
-          { label: "Total Students", value: "84", color: "#7C3AED" },
-          { label: "Submissions Today", value: "12", color: "#16A34A" },
-          { label: "Pending Review", value: "5", color: "#D97706" },
-        ].map(s => (
-          <div key={s.label} style={{
-            background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
-            padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
-          }}>
-            <div style={{ fontSize: 26, fontWeight: 700, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>{s.label}</div>
-          </div>
-        ))}
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#2563EB" }}>{dashboardData.stats.totalClasses}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Active Classes</div>
+        </div>
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#7C3AED" }}>{dashboardData.stats.totalStudents}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Total Students</div>
+        </div>
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#16A34A" }}>{dashboardData.stats.submissionsToday}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Submissions Today</div>
+        </div>
+        <div style={{
+          background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`,
+          padding: "16px 18px", boxShadow: "0 1px 6px rgba(0,0,0,0.04)"
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#D97706" }}>{dashboardData.stats.pendingReviews}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Pending Review</div>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+        {/* My Classes */}
         <div>
           <SectionTitle>My Classes</SectionTitle>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {teacherClasses.map(cls => (
-              <Card key={cls.id}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text }}>{cls.name}</div>
-                  <StatusBadge status={cls.status} />
-                </div>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10 }}>
-                  {cls.students} students · {cls.schedule}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button style={{
-                    flex: 1, padding: "8px", borderRadius: 8,
-                    background: COLORS.primaryLight, border: "none",
-                    color: COLORS.primaryDark, fontSize: 12, fontWeight: 600, cursor: "pointer"
-                  }}>View Class</button>
-                  <button style={{
-                    padding: "8px 12px", borderRadius: 8,
-                    background: COLORS.grayLight, border: `1px solid ${COLORS.border}`,
-                    color: COLORS.gray, fontSize: 12, cursor: "pointer"
-                  }}>Schedule</button>
-                </div>
-              </Card>
-            ))}
-          </div>
+          {dashboardData.myClasses.length === 0 ? (
+            <Card style={{ textAlign: "center", padding: 40 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>📚</div>
+              <p style={{ color: COLORS.textMuted, margin: 0 }}>You haven't created any classes yet. Go to "My Classes" to create one!</p>
+            </Card>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {dashboardData.myClasses.slice(0, 3).map(cls => (
+                <Card key={cls.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text }}>{cls.name}</div>
+                    <StatusBadge status={cls.status || "active"} />
+                  </div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 10 }}>
+                    {cls.enrolledStudents?.length || 0} students · {cls.schedule}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={{
+                      flex: 1, padding: "8px", borderRadius: 8,
+                      background: COLORS.primaryLight, border: "none",
+                      color: COLORS.primaryDark, fontSize: 12, fontWeight: 600, cursor: "pointer"
+                    }}>View Class</button>
+                    <button style={{
+                      padding: "8px 12px", borderRadius: 8,
+                      background: COLORS.grayLight, border: `1px solid ${COLORS.border}`,
+                      color: COLORS.gray, fontSize: 12, cursor: "pointer"
+                    }}>Schedule</button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
 
+        {/* Recent Submissions */}
         <div>
           <SectionTitle>Recent Submissions</SectionTitle>
           <Card style={{ padding: 0 }}>
-            {recentSubmissions.map((sub, i) => (
-              <div key={sub.id} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
-                borderBottom: i < recentSubmissions.length - 1 ? `1px solid ${COLORS.border}` : "none"
-              }}>
-                <Avatar name={sub.student} size={34} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: COLORS.text, marginBottom: 1 }}>{sub.student}</div>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>{sub.assignment}</div>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>{sub.submittedAt}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  {sub.grade ? (
-                    <div style={{ fontWeight: 700, fontSize: 15, color: COLORS.success }}>{sub.grade}</div>
-                  ) : (
-                    <StatusBadge status="pending" />
-                  )}
-                </div>
+            {dashboardData.recentSubmissions.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>📝</div>
+                <p style={{ color: COLORS.textMuted, margin: 0 }}>No submissions yet</p>
               </div>
-            ))}
+            ) : (
+              dashboardData.recentSubmissions.map((sub, i) => (
+                <div key={sub.id} style={{
+                  display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
+                  borderBottom: i < dashboardData.recentSubmissions.length - 1 ? `1px solid ${COLORS.border}` : "none"
+                }}>
+                  <Avatar name={sub.studentName} size={34} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: COLORS.text, marginBottom: 1 }}>{sub.studentName}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted }}>{sub.assignmentId}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(sub.submittedAt).toLocaleDateString()}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    {sub.grade ? (
+                      <div style={{ fontWeight: 700, fontSize: 15, color: COLORS.success }}>{sub.grade}</div>
+                    ) : (
+                      <StatusBadge status="pending" />
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </Card>
         </div>
       </div>
     </div>
   );
 }
+
 
 // ─── PROFILE PAGE ─────────────────────────────────────────────────────────────
 function ProfilePage({ role, userData }) {
