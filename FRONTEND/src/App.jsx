@@ -14,6 +14,8 @@ import {
   doc,
   setDoc
 } from './firebase/config'
+import ClassManager from './components/ClassManager';
+import AssignmentsManager from './components/AssignmentsManager';
 import './App.css'
 
 const COLORS = {
@@ -293,13 +295,15 @@ function LoginPage({ onLogin, onGoSignup }) {
 }
 
 // ─── SIGNUP PAGE WITH FIREBASE ──────────────────────────────────────────────
+// ─── SIGNUP PAGE WITH DEPARTMENT FIELD ──────────────────────────────────────────────
 function SignupPage({ onGoLogin, onSignupSuccess }) {
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
     password: "",
     confirmPassword: "",
-    role: "student"
+    role: "student",
+    department: ""  // ← ADD THIS FIELD
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -317,6 +321,12 @@ function SignupPage({ onGoLogin, onSignupSuccess }) {
       return;
     }
     
+    // Validate department for teachers
+    if (formData.role === "teacher" && !formData.department) {
+      setError("Please enter your department");
+      return;
+    }
+    
     setLoading(true);
     setError("");
     
@@ -324,16 +334,24 @@ function SignupPage({ onGoLogin, onSignupSuccess }) {
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
       
-      const userDocRef = doc(db, "users", user.uid);
-      await setDoc(userDocRef, {
+      // Prepare user data
+      const userDocData = {
         fullName: formData.fullName,
         email: formData.email,
         role: formData.role,
         school: "Nairobi Academy",
         createdAt: new Date().toISOString()
-      });
+      };
       
-      onSignupSuccess(formData.role, user.uid, { fullName: formData.fullName, email: formData.email });
+      // Add department for teachers
+      if (formData.role === "teacher") {
+        userDocData.department = formData.department;
+      }
+      
+      const userDocRef = doc(db, "users", user.uid);
+      await setDoc(userDocRef, userDocData);
+      
+      onSignupSuccess(formData.role, user.uid, userDocData);
     } catch (err) {
       console.error("Signup error:", err);
       if (err.code === 'auth/email-already-in-use') {
@@ -448,11 +466,11 @@ function SignupPage({ onGoLogin, onSignupSuccess }) {
             />
           </div>
 
-          <div style={{ marginBottom: 22 }}>
+          <div style={{ marginBottom: 16 }}>
             <label style={{ display: "block", color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>I am a:</label>
             <select
               value={formData.role}
-              onChange={(e) => setFormData({...formData, role: e.target.value})}
+              onChange={(e) => setFormData({...formData, role: e.target.value, department: e.target.value === "teacher" ? formData.department : ""})}
               style={{
                 width: "100%", padding: "11px 14px", borderRadius: 10, fontSize: 14,
                 background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
@@ -463,6 +481,33 @@ function SignupPage({ onGoLogin, onSignupSuccess }) {
               <option value="teacher" style={{ background: "#1e293b" }}>Teacher</option>
             </select>
           </div>
+
+          {/* Department field - only shows for teachers */}
+          {formData.role === "teacher" && (
+            <div style={{ marginBottom: 22 }}>
+              <label style={{ display: "block", color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Department *</label>
+              <select
+                value={formData.department}
+                onChange={(e) => setFormData({...formData, department: e.target.value})}
+                required
+                style={{
+                  width: "100%", padding: "11px 14px", borderRadius: 10, fontSize: 14,
+                  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                  color: "#fff", outline: "none", boxSizing: "border-box"
+                }}
+              >
+                <option value="" style={{ background: "#1e293b" }}>Select Department</option>
+                <option value="Mathematics" style={{ background: "#1e293b" }}>Mathematics</option>
+                <option value="English" style={{ background: "#1e293b" }}>English</option>
+                <option value="Sciences" style={{ background: "#1e293b" }}>Sciences</option>
+                <option value="Humanities" style={{ background: "#1e293b" }}>Humanities</option>
+                <option value="Languages" style={{ background: "#1e293b" }}>Languages</option>
+                <option value="Computer Science" style={{ background: "#1e293b" }}>Computer Science</option>
+                <option value="Physical Education" style={{ background: "#1e293b" }}>Physical Education</option>
+                <option value="Arts" style={{ background: "#1e293b" }}>Arts</option>
+              </select>
+            </div>
+          )}
 
           <button 
             type="submit"
@@ -589,21 +634,25 @@ function Sidebar({ activeNav, setActiveNav, role, onLogout, mobileOpen, setMobil
         </div>
 
         <div style={{ padding: "14px 10px", borderTop: "1px solid #1E293B" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6 }}>
-            <Avatar name={userData?.fullName || (role === "teacher" ? "John Omondi" : "Amara Osei")} size={32} />
-            <div>
-              <div style={{ color: "#E2E8F0", fontSize: 13, fontWeight: 600 }}>{userData?.fullName || (role === "teacher" ? "John Omondi" : "Amara Osei")}</div>
-              <div style={{ color: "#64748B", fontSize: 11 }}>{role === "teacher" ? "Mathematics" : "Grade 10"}</div>
-            </div>
-          </div>
-          <button onClick={onLogout} style={{
-            width: "100%", padding: "9px 12px", borderRadius: 10, border: "none",
-            background: "transparent", color: "#64748B", fontSize: 13, cursor: "pointer",
-            textAlign: "left", display: "flex", alignItems: "center", gap: 8
-          }}>
-            <span>⬡</span> Logout
-          </button>
-        </div>
+  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 6 }}>
+    <Avatar name={userData?.fullName || (role === "teacher" ? "John Omondi" : "Amara Osei")} size={32} />
+    <div>
+      <div style={{ color: "#E2E8F0", fontSize: 13, fontWeight: 600 }}>{userData?.fullName || (role === "teacher" ? "John Omondi" : "Amara Osei")}</div>
+      <div style={{ color: "#64748B", fontSize: 11 }}>
+        {role === "teacher" 
+          ? userData?.department || "Teacher" 
+          : "Student"}
+      </div>
+    </div>
+  </div>
+  <button onClick={onLogout} style={{
+    width: "100%", padding: "9px 12px", borderRadius: 10, border: "none",
+    background: "transparent", color: "#64748B", fontSize: 13, cursor: "pointer",
+    textAlign: "left", display: "flex", alignItems: "center", gap: 8
+  }}>
+    <span>⬡</span> Logout
+  </button>
+</div>
       </nav>
     </>
   );
@@ -782,6 +831,7 @@ function TeacherDashboard({ userData }) {
 function ProfilePage({ role, userData }) {
   const name = userData?.fullName || (role === "teacher" ? "John Omondi" : "Amara Osei");
   const email = userData?.email || (role === "teacher" ? "j.omondi@school.ac.ke" : "a.osei@school.ac.ke");
+  const department = userData?.department || "Not specified";
   
   return (
     <div style={{ maxWidth: 600 }}>
@@ -791,14 +841,17 @@ function ProfilePage({ role, userData }) {
           <Avatar name={name} size={60} />
           <div>
             <div style={{ fontWeight: 700, fontSize: 18, color: COLORS.text }}>{name}</div>
-            <div style={{ color: COLORS.textMuted, fontSize: 14 }}>{role === "teacher" ? "Mathematics Teacher" : "Grade 10 Student"}</div>
+            <div style={{ color: COLORS.textMuted, fontSize: 14 }}>
+              {role === "teacher" ? `${department} Teacher` : "Student"}
+            </div>
             <div style={{ color: COLORS.textMuted, fontSize: 13 }}>{email}</div>
           </div>
         </div>
         <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
           {[
             { label: "School", value: userData?.school || "Nairobi Academy" },
-            { label: role === "teacher" ? "Department" : "Form", value: role === "teacher" ? "Mathematics & Sciences" : "Form 4 North" },
+            ...(role === "teacher" ? [{ label: "Department", value: department }] : []),
+            { label: role === "teacher" ? "Teacher ID" : "Student ID", value: auth.currentUser?.uid.slice(0, 8) + "..." },
             { label: "Joined", value: userData?.createdAt ? new Date(userData.createdAt).toLocaleDateString() : "January 2024" },
           ].map(f => (
             <div key={f.label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${COLORS.border}` }}>
@@ -817,47 +870,16 @@ function ProfilePage({ role, userData }) {
   );
 }
 
-// ─── PLACEHOLDER PAGES ────────────────────────────────────────────────────────
-function ClassesPage() {
-  return (
-    <div>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 20px" }}>My Classes</h1>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-        {upcomingClasses.map(cls => (
-          <Card key={cls.id} style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ height: 4, background: cls.color }} />
-            <div style={{ padding: "16px 18px" }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text, marginBottom: 4 }}>{cls.name}</div>
-              <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>{cls.grade} · {cls.teacher}</div>
-              <button style={{ padding: "8px 16px", borderRadius: 8, background: cls.color, border: "none", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>View Class</button>
-            </div>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
+// ─── CLASSES PAGE ────────────────────────────────────────────────────────────────
+function ClassesPage({ userData, role }) {
+  return <ClassManager userData={userData} role={role} />;
 }
 
-function AssignmentsPage() {
-  return (
-    <div>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: COLORS.text, margin: "0 0 20px" }}>Assignments</h1>
-      <Card style={{ padding: 0 }}>
-        {assignments.map((a, i) => (
-          <div key={a.id} style={{
-            display: "flex", alignItems: "center", gap: 14, padding: "16px 20px",
-            borderBottom: i < assignments.length - 1 ? `1px solid ${COLORS.border}` : "none"
-          }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.text, marginBottom: 2 }}>{a.title}</div>
-              <div style={{ fontSize: 12, color: COLORS.textMuted }}>{a.subject} · Due {a.dueDate}</div>
-            </div>
-            <StatusBadge status={a.status} />
-          </div>
-        ))}
-      </Card>
-    </div>
-  );
+// ─── PLACEHOLDER PAGES ────────────────────────────────────────────────────────
+
+// AssignmentsPage function
+function AssignmentsPage({ userData, role }) {
+  return <AssignmentsManager userData={userData} role={role} />;
 }
 
 // ─── MAIN LAYOUT ──────────────────────────────────────────────────────────────
@@ -865,10 +887,12 @@ function AppLayout({ role, onLogout, userData }) {
   const [activeNav, setActiveNav] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // what to be displayed on the screen depending on the menu item clicked
   const renderContent = () => {
     if (activeNav === "dashboard") return role === "teacher" ? <TeacherDashboard userData={userData} /> : <StudentDashboard userData={userData} />;
-    if (activeNav === "classes" || ["grade7-9","grade10-12","form3","form4"].includes(activeNav)) return <ClassesPage />;
-    if (activeNav === "assignments") return <AssignmentsPage />;
+    // CHANGE THIS LINE - add userData and role props to ClassesPage
+    if (activeNav === "classes" || ["grade7-9","grade10-12","form3","form4"].includes(activeNav)) return <ClassesPage userData={userData} role={role} />;
+    if (activeNav === "assignments") return <AssignmentsPage userData={userData} role={role} />;
     if (activeNav === "profile") return <ProfilePage role={role} userData={userData} />;
     return <StudentDashboard userData={userData} />;
   };
